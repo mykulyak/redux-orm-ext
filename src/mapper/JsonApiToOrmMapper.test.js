@@ -243,4 +243,88 @@ describe("parse", () => {
     ]);
     expect(session.Task.all().toRefArray()).to.deep.equal([{ id: "t:1" }]);
   });
+
+  it("should parse FK relationships from child side", () => {
+    mapper.parse(
+      {
+        data: {
+          type: "tasks",
+          id: "1",
+          attributes: {},
+          relationships: {
+            project: {
+              data: {
+                type: "projects",
+                id: "2",
+              },
+            },
+          },
+        },
+      },
+      session
+    );
+    expect(session.state).to.deep.equal({
+      Task: {
+        itemsById: {
+          1: {
+            id: "1",
+            project: "2",
+          },
+        },
+        items: ["1"],
+        meta: { maxId: 1 },
+      },
+      Project: {
+        itemsById: {
+          2: {
+            id: "2",
+          },
+        },
+        items: ["2"],
+        meta: {},
+      },
+    });
+  });
+
+  it("should parse FK relationships from parent side", () => {
+    mapper.parse(
+      {
+        data: {
+          type: "projects",
+          id: "1",
+          attributes: {
+            name: "p1",
+          },
+          relationships: {
+            tasks: {
+              data: [
+                { type: "tasks", id: "1" },
+                { type: "tasks", id: "2" },
+                { type: "tasks", id: "3" },
+              ],
+            },
+          },
+        },
+      },
+      session
+    );
+    expect(session.state).to.deep.equal({
+      Task: {
+        meta: {},
+        items: ["1", "2", "3"],
+        itemsById: {
+          1: { id: "1", project: "1" },
+          2: { id: "2", project: "1" },
+          3: { id: "3", project: "1" },
+        },
+      },
+      Project: {
+        meta: { maxId: 1 },
+        items: ["1"],
+        itemsById: {
+          1: { id: "1", name: "p1" },
+        },
+      },
+    });
+  });
 });

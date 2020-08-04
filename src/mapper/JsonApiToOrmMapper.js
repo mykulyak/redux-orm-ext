@@ -106,9 +106,47 @@ export default class JsonApiToOrmMapper {
     const modelName = this.resourceTypeMap[resource.type];
     const modelClass = session[modelName];
     if (modelClass) {
-      modelClass.upsert({
+      const model = modelClass.upsert({
         id: resource.id,
         ...resource.attributes,
+      });
+      Object.entries(resource.relationships || {}).forEach(([key, value]) => {
+        const relKey = `${modelName}:${key}`;
+        const relEntry = this.relationshipMap[relKey];
+        invariant(relEntry != null, `Unknown relationship ${modelName}.${key}`);
+        if (relEntry.type === FK_CHILD) {
+          model[key] = value.data.id;
+          // manually update branches
+          const table = session.state[relEntry.otherModelName];
+          const { items, itemsById } = table;
+          if (itemsById[resource.id] == null) {
+            itemsById[value.data.id] = { id: value.data.id };
+            items.push(value.data.id);
+          }
+        } else if (relEntry.type === FK_PARENT) {
+          const relValue = Array.isArray(value.data)
+            ? value.data
+            : [value.data];
+          // manually update branches
+          const table = session.state[relEntry.otherModelName];
+          const { items, itemsById } = table;
+          relValue.forEach(({ id }) => {
+            if (itemsById[id] == null) {
+              itemsById[id] = { id, [relEntry.otherFieldName]: resource.id };
+              items.push(id);
+            } else {
+              itemsById[id] = {
+                ...itemsById[id],
+                [relEntry.otherFieldName]: resource.id,
+              };
+            }
+          });
+        } else {
+          invariant(
+            false,
+            `Relationship type ${relEntry.type} for ${modelName}.${key} is not yet supported`
+          );
+        }
       });
     }
   }
