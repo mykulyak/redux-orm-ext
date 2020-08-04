@@ -1,6 +1,6 @@
 /* eslint-disable max-classes-per-file */
 import { expect } from "chai";
-import { ORM, Model, attr, fk } from "redux-orm";
+import { ORM, Model, attr, fk, many } from "redux-orm";
 
 import JsonApiToOrmMapper from "./JsonApiToOrmMapper";
 
@@ -15,13 +15,27 @@ describe("construction", () => {
     static modelName = "Task";
 
     static jsonApiType = "tasks";
+
+    static fields = {
+      project: fk("Project", "tasks"),
+    };
+  }
+
+  class Person extends Model {
+    static modelName = "Person";
+
+    static jsonApiType = "people";
+
+    static fields = {
+      projects: many("Project", "assignees"),
+    };
   }
 
   let orm;
 
   beforeEach(() => {
     orm = new ORM();
-    orm.register(Project, Task);
+    orm.register(Project, Task, Person);
   });
 
   afterEach(() => {
@@ -34,10 +48,12 @@ describe("construction", () => {
     expect(mapper.resourceTypeMap).to.deep.equal({
       projects: "Project",
       tasks: "Task",
+      people: "Person",
     });
     expect(mapper.modelNameMap).to.deep.equal({
       Project: "projects",
       Task: "tasks",
+      Person: "people",
     });
   });
 
@@ -70,10 +86,48 @@ describe("construction", () => {
     expect(mapper.resourceTypeMap).to.deep.equal({
       projects: "Project",
       tasks: "Task",
+      people: "Person",
     });
     expect(mapper.modelNameMap).to.deep.equal({
       Project: "projects",
       Task: "tasks",
+      Person: "people",
+    });
+  });
+
+  it("creates relationship map for FK and M2M relationships", () => {
+    const mapper = new JsonApiToOrmMapper(orm);
+    expect(mapper.relationshipMap).to.deep.equal({
+      "Task:project": {
+        type: "fk-child",
+        otherModelName: "Project",
+        otherFieldName: "tasks",
+      },
+      "Project:tasks": {
+        type: "fk-parent",
+        otherModelName: "Task",
+        otherFieldName: "project",
+      },
+      "Person:projects": {
+        type: "many-parent",
+        otherModelName: "PersonProjects",
+        otherFieldName: "fromPersonId",
+      },
+      "Project:assignees": {
+        type: "many-parent",
+        otherModelName: "PersonProjects",
+        otherFieldName: "toProjectId",
+      },
+      "PersonProjects:fromPersonId": {
+        type: "many-child",
+        otherModelName: "Person",
+        otherFieldName: "projects",
+      },
+      "PersonProjects:toProjectId": {
+        type: "many-child",
+        otherModelName: "Project",
+        otherFieldName: "assignees",
+      },
     });
   });
 });
