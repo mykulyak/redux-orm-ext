@@ -1,10 +1,9 @@
 import { ForeignKey, ManyToMany } from "redux-orm";
 import invariant from "invariant";
 
-const FK_PARENT = "fk-parent";
-const FK_CHILD = "fk-child";
-const MANY_PARENT = "many-parent";
-const MANY_CHILD = "many-child";
+import OneToManyMapper from "./OneToManyMapper";
+import ManyToOneMapper from "./ManyToOneMapper";
+import ManyToManyMapper from "./ManyToManyMapper";
 
 export default class JsonApiToOrmMapper {
   constructor(orm) {
@@ -29,21 +28,25 @@ export default class JsonApiToOrmMapper {
       [{}, {}]
     );
 
-    this.relationshipMap = orm.registry.reduce((accum, modelClass) => {
+    this.relationshipMappers = orm.registry.reduce((accum, modelClass) => {
       Object.entries(modelClass.fields).forEach(([key, value]) => {
         if (value instanceof ForeignKey) {
           // eslint-disable-next-line no-param-reassign
-          accum[`${modelClass.modelName}:${key}`] = {
-            type: FK_CHILD,
-            otherModelName: value.toModelName,
-            otherFieldName: value.relatedName,
-          };
+          accum[`${modelClass.modelName}:${key}`] = new ManyToOneMapper({
+            thisModel: modelClass.modelName,
+            thisField: key,
+            otherModel: value.toModelName,
+            otherField: value.relatedName,
+          });
           // eslint-disable-next-line no-param-reassign
-          accum[`${value.toModelName}:${value.relatedName}`] = {
-            type: FK_PARENT,
-            otherModelName: modelClass.modelName,
-            otherFieldName: key,
-          };
+          accum[
+            `${value.toModelName}:${value.relatedName}`
+          ] = new OneToManyMapper({
+            thisModel: value.toModelName,
+            thisField: value.relatedName,
+            otherModel: modelClass.modelName,
+            otherField: key,
+          });
         } else if (value instanceof ManyToMany) {
           const throughModelName = value.getThroughModelName(key, modelClass);
           const throughFields = value.getThroughFields(
@@ -52,34 +55,28 @@ export default class JsonApiToOrmMapper {
             orm.get(value.toModelName),
             orm.get(value.getThroughModelName(key, modelClass))
           );
-
-          const throughThisFieldName = throughFields.from;
-          const throughOtherFieldName = throughFields.to;
-
           // eslint-disable-next-line no-param-reassign
-          accum[`${modelClass.modelName}:${key}`] = {
-            type: MANY_PARENT,
-            otherModelName: throughModelName,
-            otherFieldName: throughThisFieldName,
-          };
+          accum[`${modelClass.modelName}:${key}`] = new ManyToManyMapper({
+            thisModel: modelClass.modelName,
+            thisField: key,
+            otherModel: value.toModelName,
+            otherField: value.relatedName,
+            throughModel: throughModelName,
+            thisThroughField: throughFields.from,
+            otherThroughField: throughFields.to,
+          });
           // eslint-disable-next-line no-param-reassign
-          accum[`${throughModelName}:${throughThisFieldName}`] = {
-            type: MANY_CHILD,
-            otherModelName: modelClass.modelName,
-            otherFieldName: key,
-          };
-          // eslint-disable-next-line no-param-reassign
-          accum[`${value.toModelName}:${value.relatedName}`] = {
-            type: MANY_PARENT,
-            otherModelName: throughModelName,
-            otherFieldName: throughOtherFieldName,
-          };
-          // eslint-disable-next-line no-param-reassign
-          accum[`${throughModelName}:${throughOtherFieldName}`] = {
-            type: MANY_CHILD,
-            otherModelName: value.toModelName,
-            otherFieldName: value.relatedName,
-          };
+          accum[
+            `${value.toModelName}:${value.relatedName}`
+          ] = new ManyToManyMapper({
+            thisModel: value.toModelName,
+            thisField: value.relatedName,
+            otherModel: modelClass.modelName,
+            otherField: key,
+            throughModel: throughModelName,
+            thisThroughField: throughFields.to,
+            otherThroughField: throughFields.from,
+          });
         }
       });
       return accum;
@@ -111,42 +108,10 @@ export default class JsonApiToOrmMapper {
         ...resource.attributes,
       });
       Object.entries(resource.relationships || {}).forEach(([key, value]) => {
-        const relKey = `${modelName}:${key}`;
-        const relEntry = this.relationshipMap[relKey];
-        invariant(relEntry != null, `Unknown relationship ${modelName}.${key}`);
-        if (relEntry.type === FK_CHILD) {
-          model[key] = value.data.id;
-          // manually update branches
-          const table = session.state[relEntry.otherModelName];
-          const { items, itemsById } = table;
-          if (itemsById[resource.id] == null) {
-            itemsById[value.data.id] = { id: value.data.id };
-            items.push(value.data.id);
-          }
-        } else if (relEntry.type === FK_PARENT) {
-          const relValue = Array.isArray(value.data)
-            ? value.data
-            : [value.data];
-          // manually update branches
-          const table = session.state[relEntry.otherModelName];
-          const { items, itemsById } = table;
-          relValue.forEach(({ id }) => {
-            if (itemsById[id] == null) {
-              itemsById[id] = { id, [relEntry.otherFieldName]: resource.id };
-              items.push(id);
-            } else {
-              itemsById[id] = {
-                ...itemsById[id],
-                [relEntry.otherFieldName]: resource.id,
-              };
-            }
-          });
-        } else {
-          invariant(
-            false,
-            `Relationship type ${relEntry.type} for ${modelName}.${key} is not yet supported`
-          );
-        }
+        const mapperKey = `${modelName}:${key}`;
+        const mapper = this.relationshipMappers[mapperKey];
+        invariant(mapper != null, `Unknown relationship ${modelName}.${key}`);
+        mapper.parse(resource, key, value, model, session);
       });
     }
   }
